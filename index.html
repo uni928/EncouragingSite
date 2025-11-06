@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>励ましループ｜音声読み上げ＆ループ｜IndexedDB自動保存</title>
+  <meta name="description" content="励ますフレーズをひたすら垂れ流すサイト。音声読み上げ（Web Speech API）・ループ再生。設定や進捗はIndexedDBへリアルタイム保存し、再起動時に復元します。" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+JP:wght@300;400;700&display=swap" rel="stylesheet">
+  <style>
+    :root{
+      --bg-grad: radial-gradient(1200px 600px at 80% -10%, #93c5fd33, transparent 50%),
+                  radial-gradient(900px 500px at 0% 100%, #a78bfa33, transparent 50%),
+                  linear-gradient(135deg,#0b1020,#0f172a 60%, #0b1020);
+      --glass: rgba(255,255,255,0.1);
+      --glass-2: rgba(255,255,255,0.07);
+      --text: #e6e6f0;
+      --muted: #a7b0c0;
+      --accent: #60a5fa;
+      --accent-2:#a78bfa;
+      --ok:#34d399; --warn:#f59e0b; --danger:#f87171;
+      --shadow: 0 10px 40px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg-grad); color:var(--text);
+      font-family:"Noto Sans JP", system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      letter-spacing:.01em;
+    }
+    .wrap{min-height:100%; display:grid; place-items:center; padding:24px}
+    .card{
+      width:min(1100px, 94vw); max-height: 92vh; overflow: hidden; position:relative;
+      background: linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.06));
+      border:1px solid rgba(255,255,255,.15); border-radius:28px; box-shadow:var(--shadow);
+      backdrop-filter: blur(16px) saturate(120%);
+    }
+    .hero{
+      padding: 28px 28px 18px; display:flex; gap:16px; align-items:center; justify-content:space-between;
+      border-bottom:1px solid rgba(255,255,255,.08);
+    }
+    .brand{display:flex; align-items:center; gap:14px}
+    .logo{
+      width:44px; height:44px; border-radius:14px; background:linear-gradient(135deg, var(--accent), var(--accent-2));
+      box-shadow: 0 10px 24px rgba(96,165,250,.35);
+      display:grid; place-items:center;
+      font: 800 18px Outfit, system-ui; color:#0b1020;
+    }
+    .title{line-height:1.1}
+    .title h1{margin:0; font:800 22px/1.1 Outfit, system-ui}
+    .title p{margin:0; color:var(--muted); font:400 12px/1.4 Outfit, system-ui}
+    .hero .right{display:flex; gap:10px; align-items:center}
+    .pill{padding:8px 12px; border-radius:999px; border:1px solid rgba(255,255,255,.15); background:var(--glass-2); color:var(--muted); font:600 12px Outfit}
+
+    .main{display:grid; grid-template-columns: 1.3fr .9fr; gap:16px; padding: 16px; align-items:stretch}
+    @media (max-width: 980px){ .main{grid-template-columns:1fr; height:auto;}}
+
+    .viewer{
+      background:var(--glass); border:1px solid rgba(255,255,255,.1); border-radius:22px; padding:22px; display:flex; flex-direction:column; gap:16px; min-height: 48vh;
+    }
+    .phrase{
+      flex:1; display:grid; place-items:center; text-align:center; padding: 12px; border-radius:18px; position:relative;
+      background: linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      border:1px dashed rgba(255,255,255,.12);
+    }
+    .phrase .text{font-family:"Outfit","Noto Sans JP"; font-weight:700; letter-spacing:.02em; line-height:1.25; font-size: clamp(28px, 4.6vw, 56px)}
+    .fade{animation: fadeIn .5s ease both}
+    @keyframes fadeIn{from{opacity:0; transform: translateY(8px)} to{opacity:1; transform:none}}
+
+    .controls{display:flex; align-items:center; justify-content:center; gap:14px; flex-wrap:wrap}
+    button, .btn{
+      appearance:none; border:0; background: linear-gradient(180deg, rgba(255,255,255,.22), rgba(255,255,255,.08));
+      color:var(--text); border:1px solid rgba(255,255,255,.18); border-radius:14px; padding:12px 16px; font:600 14px Outfit;
+      box-shadow:var(--shadow); cursor:pointer; transition: transform .06s ease, background .2s ease;
+    }
+    button:hover{transform: translateY(-1px)}
+    .btn-ghost{background:rgba(255,255,255,.06)}
+    .toggle[aria-pressed="true"]{outline:2px solid var(--accent);}
+
+    .meters{display:grid; grid-template-columns:repeat(3,1fr); gap:12px}
+    .meter{background:var(--glass-2); border:1px solid rgba(255,255,255,.1); border-radius:14px; padding:12px}
+    .meter label{display:flex; justify-content:space-between; font:600 12px Outfit; color:var(--muted); margin-bottom:8px}
+    input[type="range"]{width:100%}
+
+    .sidebar{
+      background:var(--glass); border:1px solid rgba(255,255,255,.1); border-radius:22px; padding:18px; display:flex; flex-direction:column; gap:14px; min-height:48vh;
+    }
+    .field{display:flex; flex-direction:column; gap:8px}
+    .field label{font:600 12px Outfit; color:var(--muted)}
+    select, textarea, input[type="text"]{
+      width:100%; background:rgba(255,255,255,.06); color:var(--text); border:1px solid rgba(255,255,255,.16); border-radius:12px; padding:10px 12px; font:500 14px/1.5 "Noto Sans JP";
+    }
+    textarea{min-height:120px; resize:vertical}
+
+    .list{flex:1; overflow:auto; border-radius:14px; border:1px solid rgba(255,255,255,.1)}
+    .list table{width:100%; border-collapse:collapse; font:500 13px/1.4 "Noto Sans JP"}
+    .list th, .list td{padding:10px 12px; border-bottom:1px solid rgba(255,255,255,.08)}
+    .list tr.active{background:rgba(96,165,250,.12)}
+    .tools{display:flex; gap:8px; flex-wrap:wrap}
+
+    .footer{padding:16px 22px; color:var(--muted); border-top:1px solid rgba(255,255,255,.08); font:500 12px Outfit; display:flex; justify-content:space-between; align-items:center}
+    .badge{padding:6px 10px; border-radius:999px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.05)}
+    .start-overlay{position:absolute; inset:0; display:grid; place-items:center; background:linear-gradient(180deg, rgba(11,16,32,.7), rgba(11,16,32,.8)); backdrop-filter: blur(3px)}
+    .start-overlay .panel{background:linear-gradient(180deg, rgba(255,255,255,.14), rgba(255,255,255,.06)); padding:22px; border-radius:18px; border:1px solid rgba(255,255,255,.18); text-align:center}
+    .start-overlay .panel h2{margin:0 0 8px; font:800 20px Outfit}
+    .start-overlay .panel p{margin:0 0 14px; color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="app">
+      <div class="hero">
+        <div class="brand">
+          <div class="logo">励</div>
+          <div class="title">
+            <h1>励ましループ <span style="opacity:.6;font-weight:400">/ Pep Stream</span></h1>
+            <p>音声読み上げ＆ループ。設定・進捗はIndexedDBへ自動保存。</p>
+          </div>
+        </div>
+        <div class="right">
+          <span class="pill" id="save-indicator">保存済み</span>
+          <span class="pill" id="status-pill">待機中</span>
+        </div>
+      </div>
+
+      <div class="main">
+        <section class="viewer">
+          <div class="phrase">
+            <div class="text fade" id="phrase-text">読み上げ準備中…</div>
+          </div>
+          <div class="controls">
+            <button id="btn-start" class="btn">▶︎ 再生</button>
+            <button id="btn-pause" class="btn btn-ghost">⏸ 一時停止</button>
+            <button id="btn-prev" class="btn btn-ghost">⟲ 前へ</button>
+            <button id="btn-next" class="btn btn-ghost">⟶ 次へ</button>
+            <button id="btn-shuffle" class="btn toggle btn-ghost" aria-pressed="false">🔀 シャッフル</button>
+            <button id="btn-loop" class="btn toggle" aria-pressed="true">🔁 ループ</button>
+          </div>
+          <div class="meters">
+            <div class="meter">
+              <label><span>読み上げ速度</span><span><span id="rate-val">1.0</span>x</span></label>
+              <input id="rate" type="range" min="0.5" max="4" step="0.05" value="2">
+            </div>
+            <div class="meter">
+              <label><span>ピッチ</span><span id="pitch-val">1.0</span></label>
+              <input id="pitch" type="range" min="0" max="2" step="0.05" value="1">
+            </div>
+            <div class="meter">
+              <label><span>音量</span><span id="vol-val">1.0</span></label>
+              <input id="volume" type="range" min="0" max="1" step="0.01" value="1">
+            </div>
+          </div>
+        </section>
+
+        <aside class="sidebar">
+          <div class="field">
+            <label for="voice">ボイス（端末依存）</label>
+            <select id="voice"></select>
+          </div>
+
+          <div class="field">
+            <label for="new-phrases">フレーズを追加（1行＝1件）</label>
+            <textarea id="new-phrases" placeholder="例）\n焦らなくていい。\nいまの一歩がすべてを変える。\nあなたは十分やれている。"></textarea>
+            <div class="tools">
+              <button id="btn-add" class="btn">＋ 追加</button>
+              <button id="btn-reset" class="btn btn-ghost">↺ 既定フレーズを再投入</button>
+              <button id="btn-delete" class="btn btn-ghost" title="現在のフレーズを削除">🗑 現在を削除</button>
+              <button id="btn-export" class="btn btn-ghost">⬇︎ エクスポート</button>
+              <input id="import-file" type="file" accept="application/json" hidden>
+              <button id="btn-import" class="btn btn-ghost">⬆︎ インポート</button>
+            </div>
+          </div>
+
+          <div class="list" id="list">
+            <table>
+              <thead>
+                <tr><th style="width:48px">#</th><th>フレーズ</th></tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+        </aside>
+      </div>
+
+      <div class="footer">
+        <div>
+          <span class="badge">フレーズ: <span id="count">0</span> 件</span>
+          <span class="badge">位置: <span id="pos">-</span></span>
+        </div>
+        <div>
+          <span class="badge">Web Speech API / IndexedDB</span>
+        </div>
+      </div>
+
+      <div class="start-overlay" id="gate" hidden>
+        <div class="panel">
+          <h2>ワンクリックで開始</h2>
+          <p>ブラウザの制限により、音声再生には操作が必要です。</p>
+          <button id="btn-gate" class="btn">▶︎ はじめる</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+// ===== Utility: IndexedDB minimal helper =====
+const DB_NAME = 'pep_talk_db';
+const DB_VER = 1;
+const STORES = { state: 'state', phrases: 'phrases' };
+
+function openDB(){
+  return new Promise((resolve, reject)=>{
+    const req = indexedDB.open(DB_NAME, DB_VER);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(STORES.state)){
+        db.createObjectStore(STORES.state, { keyPath: 'key' });
+      }
+      if(!db.objectStoreNames.contains(STORES.phrases)){
+        db.createObjectStore(STORES.phrases, { keyPath: 'id', autoIncrement: true });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+function tx(db, store, mode='readonly'){ return db.transaction(store, mode).objectStore(store); }
+function saveState(db, key, value){
+  return new Promise((resolve,reject)=>{
+    const store = tx(db, STORES.state, 'readwrite');
+    const req = store.put({ key, value, updatedAt: Date.now() });
+    req.onsuccess = ()=> resolve();
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function getState(db, key){
+  return new Promise((resolve,reject)=>{
+    const req = tx(db, STORES.state).get(key);
+    req.onsuccess = ()=> resolve(req.result?.value);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function addPhrase(db, text){
+  return new Promise((resolve,reject)=>{
+    const req = tx(db, STORES.phrases, 'readwrite').add({ text: text.trim() });
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function deletePhrase(db, id){
+  return new Promise((resolve,reject)=>{
+    const req = tx(db, STORES.phrases, 'readwrite').delete(id);
+    req.onsuccess = ()=> resolve();
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function getAllPhrases(db){
+  return new Promise((resolve,reject)=>{
+    const req = tx(db, STORES.phrases).getAll();
+    req.onsuccess = ()=> resolve(req.result || []);
+    req.onerror = ()=> reject(req.error);
+  });
+}
+function clearPhrases(db){
+  return new Promise((resolve,reject)=>{
+    const req = tx(db, STORES.phrases,'readwrite').clear();
+    req.onsuccess = ()=> resolve();
+    req.onerror = ()=> reject(req.error);
+  });
+}
+
+// ===== Default phrases (多め) =====
+const DEFAULTS = [
+  "焦らなくていい。今日は“できた”を数えよう。",
+  "完璧より前進。小さく進めば十分だよ。",
+  "深呼吸。いまの一呼吸が明日を変える。",
+  "あなたのペースで大丈夫。",
+  "失敗はデータ。価値ある一歩だ。",
+  "昨日の自分を1%だけ追い越そう。",
+  "迷ってるってことは、進んでる証拠。",
+  "できない日があっても、あなたは有能だ。",
+  "優しさは強さ。まず自分に優しく。",
+  "続けた人が勝つ。あなたは続けられる。",
+  "小さな勝利は積み上がって山になる。",
+  "一度に全部やらなくていい。",
+  "5分だけやってみよう。",
+  "うまくいかない？ 学びが増えたね。",
+  "比べる相手は、昨日の自分。",
+  "止まってもいい。向きだけ保てば前進だ。",
+  "あなたの努力は見えないところで効いている。",
+  "今日のあなたに、拍手。",
+  "気合いより仕組み。仕組みはあなたの味方。",
+  "眠れていれば、半分勝ってる。",
+  "積み重ねは嘘をつかない。",
+  "“まずやる”は最強の魔法。",
+  "調子が出ない日も、あなたは価値がある。",
+  "ゆっくりでも、辞めなければ到着する。",
+  "ひとつずつ、淡々と。",
+  "悩むより、5分の試作。",
+  "未来の自分が、いまのあなたに感謝する。",
+  "期待ではなく、習慣に頼ろう。",
+  "十分やれてる。大丈夫。",
+  "気持ちが乗らない？ まず机に座ろう。",
+  "“また明日”じゃなく“いま1分”。",
+  "小さなYesを重ねていこう。",
+  "できるところまででOK。",
+  "完了は正義。",
+  "うまくいかなくても、あなたの価値は下がらない。",
+  "途中でも、えらい。",
+  "一歩動けば、景色が変わる。",
+  "あなたのペースが最速ルート。",
+  "コツコツが、結局いちばん速い。",
+  "“やることを小さく”がコツ。",
+  "ミスは更新。自分をアップデート。",
+  "前に進むあなたを、私は信じてる。",
+  "要らない完璧、捨てて軽く。",
+  "10分でできることを、10分で。",
+  "今日の最優先は1つでいい。",
+  "スタートに価値がある。",
+  "だいじょうぶ、肩の力を抜いて。",
+  "転んだら、転び方を学べた。",
+  "睡眠・栄養・光。まず土台を整えよう。",
+  "あなたは一人じゃない。",
+  "遅い進捗は、進捗だ。",
+  "できたことを書き出してみよう。",
+  "1mmでも、矢印を前に。",
+  "気が散るのは普通。戻れたらOK。",
+  "“やる気”は、やると出る。",
+  "今日はここまで。よくやったね。",
+  "挑戦してるだけで偉い。",
+  "この瞬間を丁寧に。",
+  "優先順位は“心が軽くなる順”。",
+  "迷ったら、簡単な方から。",
+  "やさしく進め。強くなれる。",
+  "朝一の一手が流れをつくる。",
+  "誰かのペースに合わせなくていい。",
+  "合格点で提出しよう。100点は要らない。",
+  "“今ここ”を大切に。",
+  "一歩進んだ自分に、グッジョブ。",
+  "今日のあなたは、今日しかいない。",
+  "勇気は静か。黙って続けること。",
+  "見た目より中身。中身は積み上がる。",
+  "何度でもやり直せる。",
+  "結果はコントロールできない。行動はできる。",
+  "できない日は“休む勇気”。",
+  "短く働き、長く生きる。",
+  "心配の8割は起きない。",
+  "あなたの“好き”はエンジンだ。",
+  "相談していい。甘えていい。",
+  "不安は紙に出すと小さくなる。",
+  "今日の最小タスクは何？",
+  "自分にやさしく、人にやさしく。",
+  "未来は“いま”の総和。",
+  "明日ではなく、いま5分。",
+  "できてるよ。ほんとに。",
+  "段取りが9割。",
+  "丁寧に断って、集中を守ろう。",
+  "あなたの価値は成果で決まらない。",
+  "疲れたら、休む。立派な仕事だ。",
+  "十分頑張った。すこし休もう。",
+  "緊張は、準備の合図。",
+  "笑顔はスキル。練習すれば増える。",
+  "やり切れなかった？ それでも前進。",
+  "“ありがとう”は自分も元気にする。",
+  "勇気は小分けにして持ち歩こう。",
+  "変わらない日々が、あなたを強くする。",
+  "いつでもやり直せる場所がある。",
+  "やさしさは循環する。",
+  "あなたの歩幅で、着実に。",
+  "できる・できないより、やる・やらない。",
+  "自分を責めない。工夫を増やそう。",
+  "数字は遅れてついてくる。",
+  "今日の“できた”を3つ見つけよう。",
+  "ちょっと背筋を伸ばして。呼吸から整えよう。",
+  "小さな期待、小さな達成。積み木のように。",
+  "努力は静かに効いている。",
+  "あなたはちゃんと強い。",
+  "今日も生き延びた。それだけで偉い。",
+  "たのしむ工夫を、ひとつ。",
+  "時間がない？ タスクを小さく。",
+  "その優しさが、遠くまで届く。",
+  "心配事は、紙に分解。",
+  "やる前がいちばん怖い。やると楽。",
+  "習慣はあなたを裏切らない。",
+  "休むことも前進。",
+  "焦りは燃料。丁寧に使おう。",
+  "あなたの選んだ道を、正解にしていこう。",
+  "今日のあなたに、ありがとう。",
+  "静かな集中は、最強の武器。",
+  "タスクは3つで十分。",
+  "できないは、まだの合図。",
+  "思い切って“やめる”も戦略。",
+  "あなたの物語は、これからもっと良くなる。",
+  "大切なのは、続ける工夫。",
+  "うまくいってるところに光を当てよう。",
+  "背中を押すのは、いつも小さな一歩。",
+  "今日の自分を肯定しよう。",
+  "がんばり方を、やさしくチューニング。",
+  "眠る前に“できた”を思い出そう。",
+  "好きは最強の集中をくれる。",
+  "挑戦は怖い。でも、成長はその先にある。",
+  "あなたの味方は、ここにいる。",
+  "うまくいかない日は、明日のための仕込み日。",
+  "今日の一歩を、未来の自分にプレゼント。",
+  "誰かの期待より、自分の納得。",
+  "自分にOKを出すのは、自分。",
+  "手放した分だけ、軽くなる。",
+  "できる理由を集めよう。",
+  "今日のあなたは、ちゃんと素敵。"
+];
+
+// ===== App state =====
+const el = (id) => document.getElementById(id);
+const ui = {
+  text: el('phrase-text'), rate: el('rate'), pitch: el('pitch'), volume: el('volume'),
+  rateVal: el('rate-val'), pitchVal: el('pitch-val'), volVal: el('vol-val'),
+  voiceSel: el('voice'),
+  btnStart: el('btn-start'), btnPause: el('btn-pause'), btnNext: el('btn-next'), btnPrev: el('btn-prev'),
+  btnLoop: el('btn-loop'), btnShuffle: el('btn-shuffle'),
+  count: el('count'), pos: el('pos'), tbody: el('tbody'),
+  gate: el('gate'), btnGate: el('btn-gate'),
+  status: el('status-pill'), saveIndicator: el('save-indicator'),
+  addTA: el('new-phrases'), btnAdd: el('btn-add'), btnReset: el('btn-reset'), btnDelete: el('btn-delete'),
+  btnExport: el('btn-export'), btnImport: el('btn-import'), importFile: el('import-file')
+};
+
+let db, phrases = [], index = 0, voices = [], speaking = false;
+const settings = { rate: 1, pitch: 1, volume: 1, voiceURI: null, loop: true, shuffle: false, startedOnce: false };
+
+function setStatus(msg){ ui.status.textContent = msg; }
+let saveTimeout; function markSaved(){ ui.saveIndicator.textContent = '保存済み'; }
+function markDirty(){ ui.saveIndicator.textContent = '保存中…'; clearTimeout(saveTimeout); saveTimeout = setTimeout(()=>ui.saveIndicator.textContent='保存済み', 500); }
+
+function updateMeters(){ ui.rateVal.textContent = settings.rate.toFixed(2); ui.pitchVal.textContent = settings.pitch.toFixed(2); ui.volVal.textContent = settings.volume.toFixed(2); }
+function updateToggles(){ ui.btnLoop.setAttribute('aria-pressed', String(settings.loop)); ui.btnShuffle.setAttribute('aria-pressed', String(settings.shuffle)); }
+function updateCounters(){ ui.count.textContent = phrases.length; ui.pos.textContent = phrases.length ? `${index+1}/${phrases.length}` : '-'; }
+
+function renderList(){
+  ui.tbody.innerHTML = '';
+  phrases.forEach((p,i)=>{
+    const tr = document.createElement('tr');
+    if(i===index) tr.classList.add('active');
+    const n = document.createElement('td'); n.textContent = i+1; n.style.textAlign='right'; n.style.opacity=.7; n.style.width='48px';
+    const t = document.createElement('td'); t.textContent = p.text; t.style.cursor='pointer'; t.title='クリックでジャンプ';
+    tr.appendChild(n); tr.appendChild(t); ui.tbody.appendChild(tr);
+    tr.addEventListener('click', ()=>{ index = i; persistIndex(); showCurrent(); if(speaking) speakCurrent(true); });
+  });
+}
+
+function showCurrent(){
+  ui.text.classList.remove('fade'); void ui.text.offsetWidth; ui.text.classList.add('fade');
+  const cur = phrases[index]; ui.text.textContent = cur ? cur.text : 'フレーズがありません';
+  renderList(); updateCounters(); }
+
+function nextIndex(){ if(!phrases.length) return 0; if(settings.shuffle){ return Math.floor(Math.random()*phrases.length); } return (index+1)%phrases.length; }
+function prevIndex(){ if(!phrases.length) return 0; return (index-1+phrases.length)%phrases.length; }
+
+function persistSettings(){ markDirty(); return saveState(db,'settings', {...settings}).then(markSaved); }
+function persistIndex(){ markDirty(); return saveState(db,'currentIndex', index).then(markSaved); }
+
+function populateVoices(){ voices = speechSynthesis.getVoices(); ui.voiceSel.innerHTML='';
+  const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='（自動選択）'; ui.voiceSel.appendChild(opt0);
+  voices.forEach(v=>{
+    const o = document.createElement('option'); o.value = v.voiceURI; o.textContent = `${v.name} / ${v.lang}`; ui.voiceSel.appendChild(o);
+  });
+  if(settings.voiceURI){ ui.voiceSel.value = settings.voiceURI; }
+}
+
+function getSelectedVoice(){ if(!settings.voiceURI) return null; return voices.find(v=>v.voiceURI===settings.voiceURI)||null; }
+
+let currentUtterance = null;
+function speakCurrent(force=false){
+  if(!phrases.length) return;
+  const text = phrases[index].text;
+  if(!force && speechSynthesis.speaking){ try{ speechSynthesis.cancel(); }catch(e){} }
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = settings.rate; u.pitch = settings.pitch; u.volume = settings.volume;
+  const v = getSelectedVoice(); if(v) u.voice = v;
+  u.onstart = ()=>{ speaking = true; setStatus('再生中'); ui.btnStart.textContent='⏹ 停止'; };
+  u.onend = ()=>{
+    speaking = false; setStatus('待機中'); ui.btnStart.textContent='▶︎ 再生';
+    if(settings.loop){ index = nextIndex(); persistIndex(); showCurrent(); speakCurrent(true); }
+  };
+  u.onerror = ()=>{ speaking=false; setStatus('エラー'); };
+  currentUtterance = u; speechSynthesis.speak(u);
+}
+
+function stopSpeak(){ if(speechSynthesis.speaking||speechSynthesis.pending){ speechSynthesis.cancel(); speaking=false; setStatus('停止'); ui.btnStart.textContent='▶︎ 再生'; } }
+function pauseSpeak(){ if(speechSynthesis.speaking && !speechSynthesis.paused){ speechSynthesis.pause(); setStatus('一時停止'); } }
+function resumeSpeak(){ if(speechSynthesis.paused){ speechSynthesis.resume(); setStatus('再生中'); } }
+
+// ===== Bootstrap =====
+(async function init(){
+  db = await openDB();
+  // restore settings
+  const saved = await getState(db,'settings'); if(saved){ Object.assign(settings, saved); }
+  updateMeters(); updateToggles();
+  ui.rate.value = settings.rate; ui.pitch.value = settings.pitch; ui.volume.value = settings.volume;
+
+  // voices (may be async)
+  populateVoices(); if(typeof speechSynthesis !== 'undefined'){ speechSynthesis.onvoiceschanged = populateVoices; }
+
+  // phrases
+  phrases = await getAllPhrases(db);
+  if(!phrases.length){ // seed defaults
+    for(const line of DEFAULTS){ await addPhrase(db, line); }
+    phrases = await getAllPhrases(db);
+  }
+  const savedIndex = await getState(db,'currentIndex'); index = Number.isInteger(savedIndex) ? Math.min(Math.max(0,savedIndex), Math.max(0,phrases.length-1)) : 0;
+
+  renderList(); showCurrent();
+  updateCounters();
+
+  // gate: try autoplay once, otherwise show overlay
+  try{
+    if(settings.startedOnce){
+      const gateEl = document.getElementById('gate');
+      if (gateEl) gateEl.remove(); // 以後はDOMから除去して表示されないように
+      speakCurrent(true);
+    } else {
+      document.getElementById('gate').hidden = false;
+    }
+  } catch(e) {
+    document.getElementById('gate').hidden = false;
+  }
+})();
+
+// ===== UI events =====
+ui.btnGate.addEventListener('click', ()=>{
+  // 押下後はオーバーレイ自体を削除して再表示されないようにする
+  if (ui.gate && ui.gate.parentNode) ui.gate.parentNode.removeChild(ui.gate);
+  settings.startedOnce = true;
+  persistSettings();
+  speakCurrent(true);
+});
+ui.btnStart.addEventListener('click', ()=>{
+  if(speaking || speechSynthesis.speaking){ stopSpeak(); }
+  else { settings.startedOnce = true; persistSettings(); speakCurrent(true); }
+});
+ui.btnPause.addEventListener('click', ()=>{ if(speechSynthesis.paused) resumeSpeak(); else pauseSpeak(); });
+ui.btnNext.addEventListener('click', ()=>{ index = nextIndex(); persistIndex(); showCurrent(); if(settings.loop && speaking) speakCurrent(true); });
+ui.btnPrev.addEventListener('click', ()=>{ index = prevIndex(); persistIndex(); showCurrent(); if(settings.loop && speaking) speakCurrent(true); });
+ui.btnLoop.addEventListener('click', ()=>{ settings.loop = !settings.loop; updateToggles(); persistSettings(); });
+ui.btnShuffle.addEventListener('click', ()=>{ settings.shuffle = !settings.shuffle; updateToggles(); persistSettings(); });
+
+ui.rate.addEventListener('input', ()=>{ settings.rate = +ui.rate.value; updateMeters(); markDirty(); });
+ui.rate.addEventListener('change', ()=>{ persistSettings(); if(speaking) speakCurrent(true); });
+ui.pitch.addEventListener('input', ()=>{ settings.pitch = +ui.pitch.value; updateMeters(); markDirty(); });
+ui.pitch.addEventListener('change', ()=>{ persistSettings(); if(speaking) speakCurrent(true); });
+ui.volume.addEventListener('input', ()=>{ settings.volume = +ui.volume.value; updateMeters(); markDirty(); });
+ui.volume.addEventListener('change', ()=>{ persistSettings(); if(speaking) speakCurrent(true); });
+
+ui.voiceSel.addEventListener('change', ()=>{ settings.voiceURI = ui.voiceSel.value || null; persistSettings(); if(speaking) speakCurrent(true); });
+
+ui.btnAdd.addEventListener('click', async ()=>{
+  const lines = ui.addTA.value.split(/\n+/).map(s=>s.trim()).filter(Boolean);
+  if(!lines.length) return;
+  for(const line of lines){ await addPhrase(db, line); }
+  ui.addTA.value=''; phrases = await getAllPhrases(db); renderList(); updateCounters(); markSaved();
+});
+
+ui.btnReset.addEventListener('click', async ()=>{
+  if(!confirm('既定のフレーズを再投入します。現在のフレーズは残ります。よろしいですか？')) return;
+  for(const line of DEFAULTS){ await addPhrase(db, line); }
+  phrases = await getAllPhrases(db); renderList(); updateCounters(); markSaved();
+});
+
+ui.btnDelete.addEventListener('click', async ()=>{
+  if(!phrases.length) return; const cur = phrases[index];
+  if(!confirm('このフレーズを削除しますか？\n\n'+cur.text)) return;
+  await deletePhrase(db, cur.id);
+  phrases = await getAllPhrases(db);
+  if(index >= phrases.length) index = Math.max(0, phrases.length-1);
+  persistIndex(); renderList(); showCurrent();
+});
+
+ui.btnExport.addEventListener('click', async ()=>{
+  const payload = { settings, phrases, index };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'pep_stream_export.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 1000);
+});
+ui.btnImport.addEventListener('click', ()=> ui.importFile.click());
+ui.importFile.addEventListener('change', async (e)=>{
+  const file = e.target.files?.[0]; if(!file) return;
+  const text = await file.text();
+  try{
+    const data = JSON.parse(text);
+    if(Array.isArray(data.phrases)){
+      await clearPhrases(db);
+      for(const p of data.phrases){ await addPhrase(db, String(p.text||'').trim()); }
+      phrases = await getAllPhrases(db);
+    }
+    if(typeof data.index === 'number'){ index = Math.min(Math.max(0,data.index), Math.max(0,phrases.length-1)); }
+    if(data.settings && typeof data.settings==='object'){ Object.assign(settings, data.settings); await persistSettings(); }
+    renderList(); showCurrent(); updateMeters(); updateToggles();
+  }catch(err){ alert('インポートに失敗しました: '+err.message); }
+  ui.importFile.value='';
+});
+
+// 保存インジケータ初期状態
+markSaved();
+</script>
+</body>
+</html>
